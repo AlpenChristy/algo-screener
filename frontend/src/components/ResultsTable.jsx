@@ -138,6 +138,9 @@ export default function ResultsTable({ data, strategyType, onExport, onSelectSto
                 Distance
               </Th>
               <Th field="volume_multiple" sortField={sortField} sortOrder={sortOrder} onSort={handleSort}>Vol ×</Th>
+              {strategyType !== '52w-low' && (
+                <Th field="delivery_pct" sortField={sortField} sortOrder={sortOrder} onSort={handleSort} right>Deliv%</Th>
+              )}
               <th className="px-4 py-3 text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Status</th>
               <th className="px-4 py-3 w-10" />
             </tr>
@@ -145,7 +148,7 @@ export default function ResultsTable({ data, strategyType, onExport, onSelectSto
           <tbody className="divide-y divide-gray-50 dark:divide-gray-800/50">
             {sorted.length === 0 ? (
               <tr>
-                <td colSpan="7" className="text-center py-12 text-[13px] text-gray-400 dark:text-gray-500">
+                <td colSpan={strategyType !== '52w-low' ? 8 : 7} className="text-center py-12 text-[13px] text-gray-400 dark:text-gray-500">
                   No stocks match the selected filter.
                 </td>
               </tr>
@@ -199,6 +202,23 @@ export default function ResultsTable({ data, strategyType, onExport, onSelectSto
                       </span>
                     </td>
 
+                    {/* Delivery % — 30-DMA only */}
+                    {strategyType !== '52w-low' && (
+                      <td className="px-4 py-3.5 text-right">
+                        {item.delivery_pct != null ? (
+                          <span className={`inline-block px-2 py-0.5 rounded-lg text-[12px] font-semibold ${
+                            item.high_delivery
+                              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400'
+                              : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
+                          }`}>
+                            {item.delivery_pct}%
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-gray-300 dark:text-gray-600">—</span>
+                        )}
+                      </td>
+                    )}
+
                     {/* Status */}
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -213,7 +233,10 @@ export default function ResultsTable({ data, strategyType, onExport, onSelectSto
                         {!item.signal && item.volume_spike && (
                           <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400">Vol Spike</span>
                         )}
-                        {!item.signal && !isNear && !item.volume_spike && (
+                        {!item.signal && item.high_delivery && (
+                          <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-400">Hi Deliv</span>
+                        )}
+                        {!item.signal && !isNear && !item.volume_spike && !item.high_delivery && (
                           <span className="text-[11px] text-gray-300 dark:text-gray-600">—</span>
                         )}
                       </div>

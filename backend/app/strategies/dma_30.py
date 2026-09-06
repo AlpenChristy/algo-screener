@@ -7,11 +7,12 @@ import pandas as pd
 
 from app.strategies.base import BaseStrategy
 from app.data.market_data import fetch_history, get_ticker_info
+from app.data.delivery_data import NSEDeliveryLoader
 
 STRATEGY_INFO = {
     "id": "30-dma",
-    "name": "30-DMA + Volume Spike",
-    "description": "Flags stocks near 30-Day Moving Average with volume expansion.",
+    "name": "30-DMA + Volume Spike + Delivery",
+    "description": "Flags stocks near 30-Day Moving Average with volume expansion and >50% deliverable quantity.",
 }
 
 
@@ -53,15 +54,10 @@ def analyze_stock(
 
     info = get_ticker_info(ticker_symbol, raise_errors=False)
 
-    delivery_qty = info.get("deliveryQuantity")
-    volume = info.get("regularMarketVolume") or last_volume
-
-    delivery_pct = None
-    if delivery_qty is not None and volume and volume > 0:
-        try:
-            delivery_pct = round((float(delivery_qty) / float(volume)) * 100, 2)
-        except (ValueError, TypeError):
-            delivery_pct = None
+    # --- Delivery data from NSE Bhavdata (authoritative source) ---
+    NSEDeliveryLoader.load_latest_delivery_data()
+    delivery_info = NSEDeliveryLoader.get_delivery_info(symbol)
+    delivery_pct = delivery_info.get("delivery_pct") if delivery_info else None
 
     float_shares = info.get("floatShares")
     shares_outstanding = info.get("sharesOutstanding")
@@ -74,6 +70,7 @@ def analyze_stock(
             float_pct = None
 
     tradable_shares = float_shares if float_shares else shares_outstanding
+    volume = info.get("regularMarketVolume") or last_volume
 
     tradable_vol_pct = None
     if volume and tradable_shares and tradable_shares > 0:
@@ -89,7 +86,9 @@ def analyze_stock(
     else:
         volume_spike = (min_mult <= vol_multiple <= max_mult)
 
-    signal = near_30_dma and volume_spike
+    high_delivery = (delivery_pct is not None) and (delivery_pct >= 50.0)
+
+    signal = near_30_dma and volume_spike and high_delivery
 
     last_date = hist.index[-1]
     if isinstance(last_date, pd.Timestamp):
@@ -107,11 +106,12 @@ def analyze_stock(
         "volume": int(last_volume),
         "prev_volume": int(prev_volume),
         "volume_multiple": round(vol_multiple, 2) if not np.isnan(vol_multiple) else None,
-        "delivery_pct": delivery_pct,
+        "delivery_pct": round(delivery_pct, 2) if delivery_pct is not None else None,
         "float_pct": float_pct,
         "tradable_vol_pct": tradable_vol_pct,
         "near_30_dma": near_30_dma,
         "volume_spike": volume_spike,
+        "high_delivery": high_delivery,
         "signal": signal,
     }
 
@@ -230,8 +230,8 @@ def run_backtest(
 
 class DMA30Strategy(BaseStrategy):
     strategy_id = "30-dma"
-    name = "30-DMA + Volume Spike"
-    description = "Flags stocks near 30-Day Moving Average with volume expansion."
+    name = "30-DMA + Volume Spike + Delivery"
+    description = "Flags stocks near 30-Day Moving Average with volume expansion and >50% deliverable quantity."
 
     def analyze_stock(self, symbol: str, **kwargs) -> Optional[Dict[str, Any]]:
         return analyze_stock(symbol, **kwargs)
