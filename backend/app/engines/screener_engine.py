@@ -1,5 +1,7 @@
-import time
-from typing import Dict, Any, Generator
+import asyncio
+import json
+from typing import AsyncGenerator, Dict, Any
+
 from app.universe.loader import load_symbols, resolve_universe_path
 from app.strategies.dma_30 import DMA30Strategy, analyze_stock as analyze_30dma
 from app.strategies.low_52w import Low52WStrategy, analyze_stock as analyze_52w
@@ -19,7 +21,39 @@ def get_strategy_module(strategy_type: str):
     return None
 
 
-def run_screener_generator(strategy_type: str, universe_name: str, params: Dict[str, Any]) -> Generator[Dict[str, Any], None, None]:
+def _analyze_stock_sync(strategy_type: str, sym: str, exchange_suffix: str, params: dict):
+    """Run synchronous per-stock analysis. Called inside run_in_executor to avoid blocking."""
+    if strategy_type in ("52w-low", "low_52w"):
+        return analyze_52w(
+            sym,
+            exchange_suffix=exchange_suffix,
+            near_low_pct=float(params.get("near_low_pct", 2.0)),
+            min_mult=float(params.get("min_mult", 3.0)),
+            max_mult=float(params.get("max_mult", 4.0)),
+        )
+    elif strategy_type in ("30-dma", "dma_30"):
+        return analyze_30dma(
+            sym,
+            exchange_suffix=exchange_suffix,
+            near_dma_pct=float(params.get("near_dma_pct", 2.0)),
+            min_mult=float(params.get("min_mult", 1.5)),
+            max_mult=float(params.get("max_mult", 2.5)),
+        )
+    else:
+        strat = get_strategy_module(strategy_type)
+        if strat:
+            return strat.analyze_stock(sym, exchange_suffix=exchange_suffix)
+    return None
+
+
+async def run_screener_async(
+    strategy_type: str, universe_name: str, params: Dict[str, Any]
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """
+    Async generator that yields SSE-compatible event dicts.
+    Each stock is analyzed in a thread pool so the event loop stays
+    unblocked and progress messages are streamed in real time.
+    """
     csv_path = resolve_universe_path(universe_name)
     symbols = load_symbols(csv_path, symbol_col=params.get("symbol_col"))
 
@@ -28,37 +62,17 @@ def run_screener_generator(strategy_type: str, universe_name: str, params: Dict[
 
     total = len(symbols)
     results = []
+    loop = asyncio.get_event_loop()
 
     strat_instance = get_strategy_module(strategy_type)
-    if not strat_instance:
+    if not strat_instance and strategy_type not in ("52w-low", "low_52w", "30-dma", "dma_30"):
         raise ValueError(f"Unknown strategy type: {strategy_type}")
 
     for i, sym in enumerate(symbols, 1):
-        stock_res = None
-        if strategy_type in ("52w-low", "low_52w"):
-            near_low_pct = float(params.get("near_low_pct", 2.0))
-            min_mult = float(params.get("min_mult", 3.0))
-            max_mult = float(params.get("max_mult", 4.0))
-            stock_res = analyze_52w(
-                sym,
-                exchange_suffix=exchange_suffix,
-                near_low_pct=near_low_pct,
-                min_mult=min_mult,
-                max_mult=max_mult,
-            )
-        elif strategy_type in ("30-dma", "dma_30"):
-            near_dma_pct = float(params.get("near_dma_pct", 2.0))
-            min_mult = float(params.get("min_mult", 1.5))
-            max_mult = float(params.get("max_mult", 2.5))
-            stock_res = analyze_30dma(
-                sym,
-                exchange_suffix=exchange_suffix,
-                near_dma_pct=near_dma_pct,
-                min_mult=min_mult,
-                max_mult=max_mult,
-            )
-        else:
-            stock_res = strat_instance.analyze_stock(sym, exchange_suffix=exchange_suffix)
+        # Run blocking I/O in a thread so we don't freeze the event loop
+        stock_res = await loop.run_in_executor(
+            None, _analyze_stock_sync, strategy_type, sym, exchange_suffix, params
+        )
 
         if stock_res:
             results.append(stock_res)
@@ -76,8 +90,9 @@ def run_screener_generator(strategy_type: str, universe_name: str, params: Dict[
             "result": stock_res,
         }
 
+        # Non-blocking delay between stocks
         if delay > 0:
-            time.sleep(delay)
+            await asyncio.sleep(delay)
 
     yield {
         "type": "complete",
@@ -85,3 +100,25 @@ def run_screener_generator(strategy_type: str, universe_name: str, params: Dict[
         "scanned_count": len(results),
         "results": results,
     }
+
+
+# ── Legacy sync generator (kept for backward compat / local testing) ──────────
+def run_screener_generator(strategy_type: str, universe_name: str, params: Dict[str, Any]):
+    """Sync generator — only use for local CLI testing. Prefer run_screener_async in API routes."""
+    import time
+    csv_path = resolve_universe_path(universe_name)
+    symbols = load_symbols(csv_path, symbol_col=params.get("symbol_col"))
+    exchange_suffix = params.get("exchange_suffix", ".NS")
+    delay = float(params.get("delay", 0.05))
+    total = len(symbols)
+    results = []
+
+    for i, sym in enumerate(symbols, 1):
+        stock_res = _analyze_stock_sync(strategy_type, sym, exchange_suffix, params)
+        if stock_res:
+            results.append(stock_res)
+        yield {"type": "progress", "current": i, "total": total, "symbol": sym, "result": stock_res}
+        if delay > 0:
+            time.sleep(delay)
+
+    yield {"type": "complete", "total": total, "scanned_count": len(results), "results": results}

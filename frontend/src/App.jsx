@@ -10,7 +10,7 @@ import StockModal from './components/StockModal';
 import UniverseUploadModal from './components/UniverseUploadModal';
 import ThemeToggle from './components/ThemeToggle';
 import { Menu } from 'lucide-react';
-import { apiFetch, wsUrl } from './lib/api';
+import { apiFetch, apiUrl } from './lib/api';
 
 const TAB_META = {
   screener: { title: 'Live Screener',  sub: 'Real-time market scanner'       },
@@ -77,11 +77,18 @@ export default function App() {
     setIsScanning(true); setIsComplete(false);
     setProgress({ current: 0, total: 0 }); setScreenerResults([]); setCurrentSymbol('');
 
-    const ws = new WebSocket(wsUrl('/ws/screener'));
-    wsRef.current = ws;
+    // Use SSE — works reliably through Render + Cloudflare proxies (unlike WebSocket)
+    const paramsJson = JSON.stringify(params);
+    const url = apiUrl(
+      `/api/screener/stream?strategy_type=${encodeURIComponent(strategyType)}` +
+      `&universe_name=${encodeURIComponent(selectedUniverse)}` +
+      `&params_json=${encodeURIComponent(paramsJson)}`
+    );
 
-    ws.onopen  = () => ws.send(JSON.stringify({ strategy_type: strategyType, universe_name: selectedUniverse, params }));
-    ws.onmessage = e => {
+    const es = new EventSource(url);
+    wsRef.current = { close: () => es.close() }; // uniform cleanup interface
+
+    es.onmessage = e => {
       const d = JSON.parse(e.data);
       if (d.type === 'progress') {
         setProgress({ current: d.current, total: d.total });
@@ -90,11 +97,12 @@ export default function App() {
       } else if (d.type === 'complete') {
         setIsScanning(false); setIsComplete(true);
         if (d.results) setScreenerResults(d.results);
-        ws.close();
-      } else if (d.type === 'error') { setIsScanning(false); ws.close(); }
+        es.close();
+      } else if (d.type === 'error') {
+        setIsScanning(false); es.close();
+      }
     };
-    ws.onerror = () => setIsScanning(false);
-    ws.onclose = () => setIsScanning(false);
+    es.onerror = () => { setIsScanning(false); es.close(); };
   };
 
   const handleRunBacktest = () => {
