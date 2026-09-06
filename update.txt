@@ -1,0 +1,190 @@
+1. Move authentication out of strategies/
+
+Currently:
+
+strategies/
+├── fyers_auth.py
+├── fyersguide.md
+├── market_data.py
+
+I'd definitely change that.
+
+Authentication isn't a strategy.
+
+Instead:
+
+app/
+└── auth/
+    ├── angelone_auth.py
+    └── fyers_auth.py
+
+Then:
+
+app/
+└── data/
+    └── providers/
+        ├── angelone.py
+        └── fyers.py
+
+This gives you:
+
+Authentication
+      ↓
+Data Provider
+      ↓
+Market Data
+      ↓
+Strategy
+      ↓
+Screener
+
+rather than having everything mixed together.
+
+2. Introduce a Data Provider interface
+
+This is probably the most important architectural improvement for your project.
+
+You are already using FYERS, and now you're experimenting with Angel One.
+
+Don't let your screener know that.
+
+For example:
+
+class MarketDataProvider:
+
+    def get_historical_data(
+        self,
+        symbol,
+        start_date,
+        end_date,
+        interval="1D"
+    ):
+        raise NotImplementedError
+
+Then:
+
+MarketDataProvider
+       │
+       ├── FyersProvider
+       │
+       ├── AngelOneProvider
+       │
+       └── YahooProvider
+
+Your backtester then does:
+
+data_provider.get_historical_data(...)
+
+instead of:
+
+fyers.get_history(...)
+
+This means you can switch providers without rewriting the screener/backtester.
+
+3. Separate instrument resolution
+
+This is particularly important for Angel One.
+
+You have:
+
+HDFCBANK
+RELIANCE
+BSE
+TCS
+...
+
+but Angel One needs something like:
+
+symbol → exchange → symboltoken
+
+So create:
+
+app/data/instrument_master.py
+
+Its responsibility:
+
+HDFCBANK
+    ↓
+NSE
+    ↓
+1333
+
+Your strategy should never know that HDFCBANK = 1333.
+
+That's a data-provider implementation detail.
+
+4. Your market_data.py becomes the abstraction layer
+
+I'd make this file responsible for things like:
+
+get_daily_data(
+    symbols,
+    start_date,
+    end_date
+)
+
+For example:
+
+data = market_data.get_daily_data(
+    symbols=["BSE", "TCS", "INFY"],
+    start_date="2020-01-01",
+    end_date="2026-09-01"
+)
+
+Internally:
+
+market_data
+     ↓
+provider
+     ↓
+instrument master
+     ↓
+Angel One API
+     ↓
+normalize response
+     ↓
+DataFrame
+
+The rest of your application simply gets standardized OHLCV data.
+
+5. Standardize your OHLCV format
+
+This will save you a lot of pain later.
+
+Every provider should return the same structure:
+
+date
+open
+high
+low
+close
+volume
+symbol
+
+Regardless of whether the data came from:
+
+FYERS
+Angel One
+Yahoo
+
+For example:
+
+DataFrame(
+    columns=[
+        "date",
+        "symbol",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+    ]
+)
+
+Then your:
+
+DMA strategy
+52W strategy
+Backtester
+Indicators
+Charts

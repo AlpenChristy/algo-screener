@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: algo-screener-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    plan: free
+
+    envVars:
+      # --- App ---
+      - key: MARKET_DATA_PROVIDER
+        value: yfinance
+
+      # --- Supabase (set these in Render dashboard) ---
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+
+      # --- AngelOne (set these in Render dashboard) ---
+      - key: ANGELONE_API_KEY
+        sync: false
+      - key: ANGELONE_CLIENT_CODE
+        sync: false
+      - key: ANGELONE_PIN
+        sync: false
+      - key: ANGELONE_TOTP_SECRET
+        sync: false
+
+      # --- Fyers (optional) ---
+      - key: FYERS_CLIENT_ID
+        sync: false
+      - key: FYERS_SECRET_KEY
+        sync: false
+      - key: FYERS_ACCESS_TOKEN
+        sync: false

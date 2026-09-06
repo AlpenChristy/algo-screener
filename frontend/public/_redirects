@@ -1,0 +1,12 @@
+# Cloudflare Pages — API proxy + SPA routing
+#
+# 1. Proxy /api/* and /ws/* to your Render.com backend.
+#    Replace the URL below with your actual Render service URL.
+#    (Set this at deploy time via Cloudflare Pages env or update here)
+#
+# Uncomment and set your Render URL once you have it:
+# /api/*  https://algo-screener-backend.onrender.com/api/:splat  200
+# /ws/*   https://algo-screener-backend.onrender.com/ws/:splat   200
+#
+# 2. SPA fallback — serve index.html for all other routes
+/*  /index.html  200
